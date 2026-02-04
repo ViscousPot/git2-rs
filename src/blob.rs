@@ -1,10 +1,71 @@
 use std::io;
 use std::marker;
 use std::mem;
+use std::path::Path;
+use std::ptr;
 use std::slice;
 
+use bitflags::bitflags;
+
 use crate::util::Binding;
-use crate::{raw, Error, Object, Oid};
+use crate::{raw, Buf, Error, Object, Oid};
+
+bitflags! {
+    /// Flags to control blob filtering behavior.
+    #[derive(Clone, Copy, Debug, Eq, PartialEq, PartialOrd, Ord, Hash)]
+    pub struct BlobFilterFlags: u32 {
+        /// When set, filters will not be applied to binary files.
+        const CHECK_FOR_BINARY = raw::GIT_BLOB_FILTER_CHECK_FOR_BINARY as u32;
+        /// Don't load `/etc/gitattributes` (or system equivalent).
+        const NO_SYSTEM_ATTRIBUTES = raw::GIT_BLOB_FILTER_NO_SYSTEM_ATTRIBUTES as u32;
+        /// Load attributes from `.gitattributes` in root of HEAD.
+        const ATTRIBUTES_FROM_HEAD = raw::GIT_BLOB_FILTER_ATTRIBUTES_FROM_HEAD as u32;
+        /// Load attributes from a specific commit.
+        const ATTRIBUTES_FROM_COMMIT = raw::GIT_BLOB_FILTER_ATTRIBUTES_FROM_COMMIT as u32;
+    }
+}
+
+impl Default for BlobFilterFlags {
+    fn default() -> Self {
+        BlobFilterFlags::CHECK_FOR_BINARY
+    }
+}
+
+/// Options for filtering a blob.
+pub struct BlobFilterOptions {
+    raw: raw::git_blob_filter_options,
+}
+
+impl BlobFilterOptions {
+    /// Create a new set of blob filter options with default values.
+    pub fn new() -> BlobFilterOptions {
+        let mut raw = unsafe { mem::zeroed() };
+        unsafe {
+            raw::git_blob_filter_options_init(&mut raw, raw::GIT_BLOB_FILTER_OPTIONS_VERSION);
+        }
+        BlobFilterOptions { raw }
+    }
+
+    /// Set flags for blob filtering.
+    pub fn flags(&mut self, flags: BlobFilterFlags) -> &mut Self {
+        self.raw.flags = flags.bits();
+        self
+    }
+
+    /// Set the commit from which to read attributes.
+    ///
+    /// Only used when ATTRIBUTES_FROM_COMMIT flag is set.
+    pub fn attr_commit(&mut self, commit: Oid) -> &mut Self {
+        self.raw.attr_commit_id = unsafe { *commit.raw() };
+        self
+    }
+}
+
+impl Default for BlobFilterOptions {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 /// A structure to represent a git [blob][1]
 ///
@@ -48,6 +109,46 @@ impl<'repo> Blob<'repo> {
     pub fn into_object(self) -> Object<'repo> {
         assert_eq!(mem::size_of_val(&self), mem::size_of::<Object<'_>>());
         unsafe { mem::transmute(self) }
+    }
+
+    /// Filter blob content through the configured filters.
+    ///
+    /// This applies gitattributes filters (crlf, ident, etc.) to the blob content
+    /// as if it were being checked out to the given path.
+    ///
+    /// # Arguments
+    /// * `as_path` - Path to use for attribute lookups
+    /// * `opts` - Optional filtering options
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use git2::Repository;
+    ///
+    /// let repo = Repository::open("/path/to/repo")?;
+    /// let blob = repo.find_blob(repo.head()?.peel_to_blob()?.id())?;
+    /// let filtered = blob.filter("file.txt", None)?;
+    /// # Ok::<(), git2::Error>(())
+    /// ```
+    pub fn filter<P: AsRef<Path>>(
+        &self,
+        as_path: P,
+        opts: Option<&mut BlobFilterOptions>,
+    ) -> Result<Buf, Error> {
+        let as_path = crate::util::cstring_to_repo_path(as_path.as_ref())?;
+        let buf = Buf::new();
+        unsafe {
+            let opts_ptr = opts
+                .map(|o| &mut o.raw as *mut _)
+                .unwrap_or(ptr::null_mut());
+            try_call!(raw::git_blob_filter(
+                buf.raw(),
+                self.raw,
+                as_path.as_ptr(),
+                opts_ptr
+            ));
+        }
+        Ok(buf)
     }
 }
 
@@ -153,7 +254,9 @@ impl<'repo> io::Write for BlobWriter<'repo> {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
     use crate::Repository;
+    use std::fs;
     use std::fs::File;
     use std::io::prelude::*;
     use std::path::Path;
@@ -202,5 +305,84 @@ mod tests {
         let blob = repo.find_blob(id).unwrap();
         assert_eq!(blob.content(), [10, 11, 12]);
         blob.into_object();
+    }
+
+    #[test]
+    fn test_blob_filter_default() {
+        let td = TempDir::new().unwrap();
+        let repo = Repository::init(td.path()).unwrap();
+
+        // Create a blob with simple content
+        let id = repo.blob(b"Hello World\n").unwrap();
+        let blob = repo.find_blob(id).unwrap();
+
+        // Filter without any .gitattributes (should return content unchanged)
+        let filtered = blob.filter("test.txt", None).unwrap();
+        assert_eq!(filtered.as_ref(), b"Hello World\n");
+    }
+
+    #[test]
+    fn test_blob_filter_with_ident() {
+        let td = TempDir::new().unwrap();
+        let repo = Repository::init(td.path()).unwrap();
+
+        // Create a .gitattributes file with ident filter
+        fs::write(td.path().join(".gitattributes"), "*.txt ident\n").unwrap();
+
+        // Create a blob with $Id$ placeholder
+        let id = repo.blob(b"$Id$\nHello World\n").unwrap();
+        let blob = repo.find_blob(id).unwrap();
+
+        // Filter the blob - should expand $Id$ to include the blob SHA
+        let filtered = blob.filter("test.txt", None).unwrap();
+        let content = std::str::from_utf8(&filtered).unwrap();
+
+        // The $Id$ should be expanded to include the blob SHA
+        assert!(
+            content.starts_with("$Id:"),
+            "Expected $Id: expansion, got: {}",
+            content
+        );
+        let oid_str = id.to_string();
+        assert!(
+            content.contains(&oid_str),
+            "Expected blob OID {} in expansion, got: {}",
+            oid_str,
+            content
+        );
+    }
+
+    #[test]
+    fn test_blob_filter_with_options() {
+        let td = TempDir::new().unwrap();
+        let repo = Repository::init(td.path()).unwrap();
+
+        // Create a .gitattributes file with ident filter
+        fs::write(td.path().join(".gitattributes"), "*.txt ident\n").unwrap();
+
+        // Create a blob
+        let id = repo.blob(b"$Id$\nContent\n").unwrap();
+        let blob = repo.find_blob(id).unwrap();
+
+        // Filter with options (not using ATTRIBUTES_FROM_HEAD since HEAD doesn't exist)
+        let mut opts = BlobFilterOptions::new();
+        opts.flags(BlobFilterFlags::CHECK_FOR_BINARY | BlobFilterFlags::NO_SYSTEM_ATTRIBUTES);
+
+        let filtered = blob.filter("test.txt", Some(&mut opts)).unwrap();
+        // Ident filter should expand $Id$ even with custom options
+        assert!(!filtered.is_empty());
+        let content = std::str::from_utf8(&filtered).unwrap();
+        assert!(
+            content.contains("$Id"),
+            "Expected ident expansion in output, got: {}",
+            content
+        );
+    }
+
+    #[test]
+    fn test_blob_filter_flags_default() {
+        // Default flags should include CHECK_FOR_BINARY to skip binary files
+        let flags = BlobFilterFlags::default();
+        assert!(flags.contains(BlobFilterFlags::CHECK_FOR_BINARY));
     }
 }

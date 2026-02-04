@@ -1215,6 +1215,44 @@ impl Repository {
         }
     }
 
+    /// Load the filter list for a given path.
+    ///
+    /// This will return the filters that should be applied to transform
+    /// a file at the given path based on the repository's configuration
+    /// (e.g., `.gitattributes`).
+    ///
+    /// Returns `Ok(None)` if no filters are configured for the given path.
+    ///
+    /// # Arguments
+    ///
+    /// * `blob` - Optional blob for heuristic filtering (e.g., for binary detection)
+    /// * `path` - The path of the file (relative to the working directory)
+    /// * `mode` - The filtering direction (to worktree or to ODB)
+    /// * `flags` - Flags controlling filter behavior
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use git2::{Repository, FilterMode, FilterFlags};
+    ///
+    /// let repo = Repository::open(".")?;
+    /// let filters = repo.filter_list(None, "file.txt", FilterMode::ToWorktree, FilterFlags::DEFAULT)?;
+    /// if let Some(f) = filters {
+    ///     let content = b"line1\nline2\n";
+    ///     let filtered = f.apply_to_buffer(content)?;
+    /// }
+    /// # Ok::<(), git2::Error>(())
+    /// ```
+    pub fn filter_list(
+        &self,
+        blob: Option<&Blob<'_>>,
+        path: &str,
+        mode: crate::FilterMode,
+        flags: crate::FilterFlags,
+    ) -> Result<Option<crate::FilterList<'_>>, Error> {
+        crate::FilterList::load(self, blob, path, mode, flags)
+    }
+
     /// Get the object database for this repository
     pub fn odb(&self) -> Result<Odb<'_>, Error> {
         let mut odb = ptr::null_mut();

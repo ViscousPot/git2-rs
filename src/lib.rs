@@ -82,7 +82,7 @@ use std::sync::Once;
 pub use crate::apply::{ApplyLocation, ApplyOptions};
 pub use crate::attr::AttrValue;
 pub use crate::blame::{Blame, BlameHunk, BlameIter, BlameOptions};
-pub use crate::blob::{Blob, BlobWriter};
+pub use crate::blob::{Blob, BlobFilterFlags, BlobFilterOptions, BlobWriter};
 pub use crate::branch::{Branch, Branches};
 pub use crate::buf::Buf;
 pub use crate::cherrypick::CherrypickOptions;
@@ -97,6 +97,10 @@ pub use crate::diff::{DiffBinary, DiffBinaryFile, DiffBinaryKind, DiffPatchidOpt
 pub use crate::diff::{DiffFindOptions, DiffHunk, DiffLine, DiffLineType, DiffStats};
 pub use crate::email::{Email, EmailCreateOptions};
 pub use crate::error::Error;
+pub use crate::filter::{
+    filter_priority, lookup_filter, register_filter, unregister_filter, Filter, FilterFlags,
+    FilterList, FilterMode, FilterOptions, FilterSource, FilterStream,
+};
 pub use crate::index::{
     Index, IndexConflict, IndexConflicts, IndexEntries, IndexEntry, IndexMatchedPath,
 };
@@ -709,6 +713,7 @@ mod describe;
 mod diff;
 mod email;
 mod error;
+mod filter;
 mod index;
 mod indexer;
 mod mailmap;

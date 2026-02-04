@@ -52,7 +52,7 @@ mod impls {
     use std::ptr;
 
     use crate::call::Convert;
-    use crate::{raw, BranchType, ConfigLevel, Direction, ObjectType, ResetType};
+    use crate::{raw, BranchType, ConfigLevel, Direction, FilterMode, ObjectType, ResetType};
     use crate::{
         AutotagOption, DiffFormat, FetchPrune, FileFavor, SubmoduleIgnore, SubmoduleUpdate,
     };
@@ -236,6 +236,15 @@ mod impls {
                 FetchPrune::Unspecified => raw::GIT_FETCH_PRUNE_UNSPECIFIED,
                 FetchPrune::On => raw::GIT_FETCH_PRUNE,
                 FetchPrune::Off => raw::GIT_FETCH_NO_PRUNE,
+            }
+        }
+    }
+
+    impl Convert<raw::git_filter_mode_t> for FilterMode {
+        fn convert(&self) -> raw::git_filter_mode_t {
+            match *self {
+                FilterMode::ToWorktree => raw::GIT_FILTER_TO_WORKTREE,
+                FilterMode::ToOdb => raw::GIT_FILTER_TO_ODB,
             }
         }
     }

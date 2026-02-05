@@ -651,6 +651,11 @@ struct RawFilter {
     raw: raw::git_filter,
     obj: Box<dyn Filter>,
     initialized: bool,
+    /// Number of attributes declared by this filter (whitespace-separated tokens
+    /// in `attributes()`). Used to bound iteration over the `attr_values` array
+    /// in `filter_check_cb`, since libgit2 allocates exactly `nattrs` elements
+    /// with no NULL sentinel.
+    nattrs: usize,
     /// Owned attributes string - must be kept alive for the lifetime of the filter
     /// since raw.attributes points to it.
     _attributes: CString,
@@ -696,6 +701,7 @@ pub unsafe fn register_filter<F: Filter>(
     crate::init();
 
     let name = CString::new(name)?;
+    let nattrs = filter.attributes().split_whitespace().count();
     let attributes = CString::new(filter.attributes())?;
 
     // Create the RawFilter with the attributes stored inside.
@@ -714,6 +720,7 @@ pub unsafe fn register_filter<F: Filter>(
         },
         obj: Box::new(filter),
         initialized: false,
+        nattrs,
         _attributes: attributes,
     });
 
@@ -803,15 +810,16 @@ extern "C" fn filter_check_cb(
         let raw_filter = &mut *(filter as *mut RawFilter);
         let source = FilterSource::from_raw(src);
 
-        // Convert attribute values to a slice of CStr
-        let mut attrs: Vec<&CStr> = Vec::new();
-        if !attr_values.is_null() {
-            let mut ptr = attr_values;
-            while !(*ptr).is_null() {
-                attrs.push(CStr::from_ptr(*ptr));
-                ptr = ptr.add(1);
-            }
-        }
+        // Convert attribute values to a slice of CStr.
+        // libgit2 allocates exactly `nattrs` elements with no NULL sentinel,
+        // so we must use bounded iteration to avoid reading past the end.
+        let attrs: Vec<&CStr> = if !attr_values.is_null() && raw_filter.nattrs > 0 {
+            (0..raw_filter.nattrs)
+                .map(|i| CStr::from_ptr(*attr_values.add(i)))
+                .collect()
+        } else {
+            Vec::new()
+        };
 
         match panic::wrap(AssertUnwindSafe(|| raw_filter.obj.check(&source, &attrs))) {
             Some(Ok(Some(p))) => {

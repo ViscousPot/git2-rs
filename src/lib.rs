@@ -108,6 +108,10 @@ pub use crate::indexer::{Indexer, IndexerProgress, Progress};
 pub use crate::mailmap::Mailmap;
 pub use crate::mempack::Mempack;
 pub use crate::merge::{AnnotatedCommit, MergeFileOptions, MergeFileResult, MergeOptions};
+pub use crate::merge_driver::{
+    lookup_merge_driver, register_merge_driver, unregister_merge_driver, MergeDriver,
+    MergeDriverApplyResult, MergeDriverSource,
+};
 pub use crate::message::{
     message_prettify, message_trailers_bytes, message_trailers_strs, MessageTrailersBytes,
     MessageTrailersBytesIterator, MessageTrailersStrs, MessageTrailersStrsIterator,
@@ -719,6 +723,7 @@ mod indexer;
 mod mailmap;
 mod mempack;
 mod merge;
+mod merge_driver;
 mod message;
 mod note;
 mod object;

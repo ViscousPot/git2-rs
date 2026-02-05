@@ -47,6 +47,7 @@ pub const GIT_REVERT_OPTIONS_VERSION: c_uint = 1;
 pub const GIT_INDEXER_OPTIONS_VERSION: c_uint = 1;
 pub const GIT_FILTER_OPTIONS_VERSION: c_uint = 1;
 pub const GIT_FILTER_VERSION: c_uint = 1;
+pub const GIT_MERGE_DRIVER_VERSION: c_uint = 1;
 pub const GIT_BLOB_FILTER_OPTIONS_VERSION: c_uint = 1;
 
 pub const GIT_FILTER_CRLF_PRIORITY: c_int = 0;
@@ -242,6 +243,7 @@ pub enum git_mailmap {}
 pub enum git_indexer {}
 pub enum git_filter_list {}
 pub enum git_filter_source {}
+pub enum git_merge_driver_source {}
 
 // Filter callback types
 pub type git_filter_init_fn = Option<extern "C" fn(*mut git_filter) -> c_int>;
@@ -265,6 +267,20 @@ pub type git_filter_stream_fn = Option<
 >;
 pub type git_filter_cleanup_fn = Option<extern "C" fn(*mut git_filter, *mut c_void)>;
 
+// Merge driver callback types
+pub type git_merge_driver_init_fn = Option<extern "C" fn(*mut git_merge_driver) -> c_int>;
+pub type git_merge_driver_shutdown_fn = Option<extern "C" fn(*mut git_merge_driver)>;
+pub type git_merge_driver_apply_fn = Option<
+    extern "C" fn(
+        *mut git_merge_driver,
+        *mut *const c_char,
+        *mut u32,
+        *mut git_buf,
+        *const c_char,
+        *const git_merge_driver_source,
+    ) -> c_int,
+>;
+
 #[repr(C)]
 pub struct git_filter {
     pub version: c_uint,
@@ -275,6 +291,14 @@ pub struct git_filter {
     pub apply: *mut c_void,
     pub stream: git_filter_stream_fn,
     pub cleanup: git_filter_cleanup_fn,
+}
+
+#[repr(C)]
+pub struct git_merge_driver {
+    pub version: c_uint,
+    pub initialize: git_merge_driver_init_fn,
+    pub shutdown: git_merge_driver_shutdown_fn,
+    pub apply: git_merge_driver_apply_fn,
 }
 
 #[repr(C)]
@@ -4845,6 +4869,19 @@ extern "C" {
         priority: c_int,
     ) -> c_int;
     pub fn git_filter_unregister(name: *const c_char) -> c_int;
+
+    // merge driver source queries
+    pub fn git_merge_driver_source_repo(src: *const git_merge_driver_source) -> *mut git_repository;
+    pub fn git_merge_driver_source_ancestor(src: *const git_merge_driver_source) -> *const git_index_entry;
+    pub fn git_merge_driver_source_ours(src: *const git_merge_driver_source) -> *const git_index_entry;
+    pub fn git_merge_driver_source_theirs(src: *const git_merge_driver_source) -> *const git_index_entry;
+    pub fn git_merge_driver_source_file_options(src: *const git_merge_driver_source) -> *const git_merge_file_options;
+
+    // merge driver registration
+    pub fn git_merge_driver_lookup(name: *const c_char) -> *mut git_merge_driver;
+    pub fn git_merge_driver_register(name: *const c_char, driver: *mut git_merge_driver) -> c_int;
+    pub fn git_merge_driver_unregister(name: *const c_char) -> c_int;
+
     pub fn git_filter_list_new(
         out: *mut *mut git_filter_list,
         repo: *mut git_repository,
